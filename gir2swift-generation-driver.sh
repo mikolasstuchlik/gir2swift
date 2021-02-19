@@ -285,12 +285,72 @@ validate)
     echo "TODO: not implemented"
     ;;
 
-xcodegen)
-    echo "TODO: not implemented"
+## THIS CODE IS MODIFIED LEGACY IMPLEMENTATION
+## generate-xcodeproj is deprecated https://github.com/apple/swift-package-manager/pull/3062
+patchxcproj)
+    TOP_LEVEL_PACKAGE_PATH=$2
+
+    cd $TOP_LEVEL_PACKAGE_PATH
+
+    DEPENDENCIES=`swift package show-dependencies --format json`
+    PROCESSABLE=$(get_processable_dependencies_arg-deps_arg-name "$DEPENDENCIES" "$(package_name)")
+
+    ALL_PROCESSABLE="$PROCESSABLE"
+    if $(is_processable_arg-path "$TOP_LEVEL_PACKAGE_PATH")
+    then
+        ALL_PROCESSABLE="$TOP_LEVEL_PACKAGE_PATH $PROCESSABLE"
+    fi
+
+    PKGS=""
+    for PACKAGE in $ALL_PROCESSABLE
+    do
+        cd $PACKAGE
+        PKGS="$PKGS $(package_pkg_config_arguments)"
+    done
+
+    CCFLAGS=`pkg-config --cflags $PKGS`
+
+    local PACKAGE_NAME=$(package_name)
+    [ ! -e ${PACKAGE_NAME}.xcodeproj/Configs ] ||					   \
+    ( cd ${PACKAGE_NAME}.xcodeproj/Configs						&& \
+        mv Project.xcconfig Project.xcconfig.in				&& \
+        echo 'SWIFT_VERSION = 3.0' >> Project.xcconfig.in			&& \
+        sed -e 's/ -I ?[^ ]*//g' < Project.xcconfig.in > Project.xcconfig	&& \
+        grep 'OTHER_CFLAGS' < Project.xcconfig.in | sed 's/-I */-I/g'		|  \
+        tr ' ' '\n' | grep -- -I | tr '\n' ' '				|  \
+        sed -e 's/^/HEADER_SEARCH_PATHS = /' -e 's/ -I/ /g' >> Project.xcconfig
+    )
+    ( cd ${PACKAGE_NAME}.xcodeproj							&& \
+        mv project.pbxproj project.pbxproj.in					&& \
+        sed < project.pbxproj.in > project.pbxproj				   \
+        -e "s|\(HEADER_SEARCH_PATHS = .\)$|\\1 \"`echo $CCFLAGS | sed -e 's/-Xcc  *-I */ /g' -e 's/^ *//' -e 's/ *$//'`\",|"
+    )
     ;;
 
+## THIS CODE IS MODIFIED LEGACY IMPLEMENTATION
 docgen)
-    echo "TODO: not implemented"
+    TOP_LEVEL_PACKAGE_PATH=$2
+
+    cd $TOP_LEVEL_PACKAGE_PATH
+
+    local BUILD_DIR="${PWD}/.build"
+    local PACKAGE_NAME=$(package_name)
+    local JAZZY_VER=3.24.24
+    local GIR_NAME=$(get_gir_names_arg-package ${PKG_PATH})
+    local DEPENDENCIES=`swift package show-dependencies --format json`
+    local G2S_PACKAGE_PATH=`jq -r 'first(recurse(.dependencies[]) | select(.name == "gir2swift")) | .path' <<< $DEPENDENCIES`
+    [ -e Sources/${PACKAGE_NAME}/${GIR_NAME}.swift ] || ./generate-wrapper.sh
+    [ -e "$BUILD_DIR/build.db" ] || ./build.sh
+
+    JAZZY_ARGS="--theme fullwidth --author Ren&eacute;&nbsp;Hexel --author_url https://experts.griffith.edu.au/9237-rene-hexel --github_url https://github.com/rhx/Swift$PACKAGE_NAME --github-file-prefix https://github.com/rhx/Swift$PACKAGE_NAME/tree/generated --root-url http://rhx.github.io/Swift$PACKAGE_NAME/ --output docs"
+    rm -rf .docs.old
+    mv docs .docs.old 2>/dev/null
+    [ -e .build ] || ln -s "$BUILD_DIR" .build
+    sourcekitten doc --spm --module-name $PACKAGE_NAME -- --build-path "$BUILD_DIR"  \
+	    `$G2S_PACKAGE_PATH/gir2swift-generation-driver.sh c-flags ${PWD}` > "$BUILD_DIR/$PACKAGE_NAME-doc.json"
+    jazzy   --sourcekitten-sourcefile "$BUILD_DIR/$PACKAGE_NAME-doc.json" --clean	\
+            --module-version $JAZZY_VER --module $PACKAGE_NAME $JAZZY_ARGS
+    rm -f .build 2>/dev/null
     ;;
 
 g2s-init)
@@ -307,9 +367,9 @@ g2s-init)
     echo "  remove-generated    Removes generated files"
     echo "  c-flags             Prints c-flags for Swift compiler on macOS to the standard output"
     echo "  validate            Validates package and dependencies using gir2swift"
-    echo "  xcodegen            Generates Xcode project"
+    echo "  patchxcproj         Patches Xcode project"
     echo "  docgen              Generates documentation using Jazzy"
-    echo "  g2s-init [GIR NAME] [pkg-config NAME] [SWIFT NAME]  [OPTIONAL POST PROCESSING]"
+    echo "  g2s-init [GIR NAME] [pkg-config NAME]"
     echo "                      Generates template and validates Swift project"
     ;;
 esac
