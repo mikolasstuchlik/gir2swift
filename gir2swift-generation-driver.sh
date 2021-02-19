@@ -1,9 +1,9 @@
 #!/bin/bash
 
-## Function used to determine, whether provided path requires processing by gir2swift
+## TODO
+## Function used to determine, whether provided path contains valid package
 ## ARGUMENT 1: Path to the Swift package in question
-## RETURN: `true` if package contains dependency to gir2swift and contains file named "gir2swift-manifest.sh" 
-function is_processable_arg-path {
+function validate_is_processable_arg-path {
     local PACKAGE_PATH=$1
 
     local CALLER=$PWD
@@ -23,27 +23,59 @@ function is_processable_arg-path {
     fi
 }
 
-## Function which searches for folder containing all .gir files provided in argument. Exists if no such folder was found. Searched domain is specified in the foor loop of this function.
-## ARGUMENT 1: List of gir names without .gir suffixes.
-## RETURN: Path to the folder 
-function gir_path_arg-gir-names {
-    local GIR_NAMES=$1
+## Function used to determine, whether provided path requires processing by gir2swift
+## ARGUMENT 1: Path to the Swift package in question
+## RETURN: `true` if package contains file named "gir2swift-manifest.sh" 
+function is_processable_arg-path {
+    local PACKAGE_PATH=$1
 
-    local GIR_FILES=`for NAME in ${GIR_NAMES}; do echo -n "${NAME}.gir "; done`
+    local CALLER=$PWD
+    cd $PACKAGE_PATH
 
+    local MANIFEST="gir2swift-manifest.sh"
+
+    if [[ -f "$MANIFEST" ]]
+    then
+        cd $CALLER
+        return 0
+    else
+        cd $CALLER 
+        return 1
+    fi
+}
+
+## Function which searches for .gir file in current system and returns full path to gir file.
+## ARGUMENT 1: Path to package containing gir2swift-manifest.sh
+## RETURN: Full path to gir file or 1
+function gir_file_arg-pkg-path {
+    local PKG_PATH=$1
+
+    local GIR_NAME=$(get_gir_names_arg-package ${PKG_PATH})
+    local GIR_PKG=$(get_gir_pkg_arg-package ${PKG_PATH})
+
+    # Attempt to search in default directories
     for DIR in "/opt/homebrew/share/gir-1.0" "/usr/local/share/gir-1.0" "/usr/share/gir-1.0" ; do
         CURRENT=$DIR
-        for GIR in $GIR_FILES; do
-	        if ! [ -f "${DIR}/${GIR}" ] ; then
-		        unset CURRENT
-	        fi
-        done
+        if ! [ -f "${DIR}/${GIR_NAME}.gir" ] ; then
+            unset CURRENT
+        fi
 
         if ! [ -z ${CURRENT} ] ; then
-            echo "$CURRENT"
-            break
+            echo "$CURRENT/${GIR_NAME}.gir"
+            exit 0
         fi
     done
+
+    # In case platform is macOS, library may be contained in a sandbox
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        local PKG_PATH=`pkg-config --variable=libdir ${GIR_PKG}`
+        local ASSUMED_PATH="${PKG_PATH}/../share/gir-1.0/${GIR_NAME}.gir"
+
+        if [ -f "${ASSUMED_PATH}" ] ; then
+            echo "${ASSUMED_PATH}"
+            exit 0
+        fi
+    fi
 
     exit 1
 }
@@ -88,16 +120,22 @@ function get_processable_dependencies_arg-deps_arg-name {
     done
 }
 
-## Returns names of all GIR files of provided packages.
-## ARGUMENT 1: List of paths to the packages in question. ONLY PROCESSABLE PACKAGES ARE VALID INPUT.
-## RETURN: List of names of gir files.
-function get_gir_names_arg-packages {
-    local PACKAGES=$1
+## Returns names of GIR file of provided package.
+## ARGUMENT 1: Path to the package in question. ONLY PROCESSABLE PACKAGE IS VALID INPUT.
+## RETURN: Names of gir file.
+function get_gir_names_arg-package {
+    local PACKAGE=$1
 
-    for PACKAGE in $PACKAGES
-    do
-        bash -c "$PACKAGE/gir2swift-manifest.sh gir-name"
-    done 
+    bash -c "$PACKAGE/gir2swift-manifest.sh gir-name"
+}
+
+## Returns name of pkg-config package which is related to the gir file.
+## ARGUMENT 1: Path to the package in question. ONLY PROCESSABLE PACKAGE IS VALID INPUT.
+## RETURN:Name of pkg-config package.
+function get_gir_pkg_arg-package {
+    local PACKAGE=$1
+
+    bash -c "$PACKAGE/gir2swift-manifest.sh gir-pkg"
 }
 
 ## Returns name of Swift package. This function depends on working directiory it is run in. This function is exported and required by manifests.
@@ -156,10 +194,17 @@ generate)
         ALL_PROCESSABLE="$TOP_LEVEL_PACKAGE_PATH $PROCESSABLE"
     fi
 
-    # Search for path that contains all GIR files
-    ALL_GIR_NAMES=$(get_gir_names_arg-packages "$ALL_PROCESSABLE")
-    GIR_PATH=$(gir_path_arg-gir-names "$ALL_GIR_NAMES")
-    echo "Girs located at $GIR_PATH"
+    # Resolve paths to gir files
+    declare -A gir_files
+    for PACKAGE in $ALL_PROCESSABLE
+    do
+        GIR_FILE=$(gir_file_arg-pkg-path $PACKAGE)
+        if ! [[ $GIR_FILE ]]; then
+            echo "Gir file for $PACKAGE not found!"
+            exit 1
+        fi
+        gir_files[${PACKAGE}]=${GIR_FILE}
+    done
 
     # Determine path to gir2swift executable
     if [ -z "$OPTIONAL_ALTERNATIVE_G2S_PATH" ]
@@ -171,21 +216,15 @@ generate)
         echo "Using custom gir2swift executable at: $G2S_PATH"
     fi
 
-    for PACKAGE in $PROCESSABLE
+    for PACKAGE in $ALL_PROCESSABLE
     do
         PACKAGE_NAME=$(package_name_arg-path "$PACKAGE")
         PACKAGE_DEPS=$(get_processable_dependencies_arg-deps_arg-name "$DEPENDENCIES" "$PACKAGE_NAME")
-        GIR_NAMES=$(get_gir_names_arg-packages "$PACKAGE_DEPS")
-	echo -n "Generating Swift Wrapper for $PACKAGE_NAME ... "
-        bash -c "$PACKAGE/gir2swift-manifest.sh generate \"$PACKAGE\" \"$G2S_PATH\" \"$GIR_NAMES\" \"$GIR_PATH\" "
+        DEP_PATHS=`for PATH in ${PACKAGE_DEPS}; do echo -n " ${gir_files[${PATH}]}"; done`
+        GIR_PATH=${gir_files[${PACKAGE}]}
+        echo -n "Generating Swift Wrapper for $PACKAGE_NAME ... "
+        bash -c "$PACKAGE/gir2swift-manifest.sh generate \"$PACKAGE\" \"$G2S_PATH\" \"$DEP_PATHS\" \"$GIR_PATH\" "
     done
-
-    if $(is_processable_arg-path "$TOP_LEVEL_PACKAGE_PATH")
-    then
-        GIR_NAMES=$(get_gir_names_arg-packages "$PROCESSABLE")
-	echo -n "Generating Swift Wrapper for $TOP_LEVEL_PACKAGE_NAME ... "
-        bash -c "$TOP_LEVEL_PACKAGE_PATH/gir2swift-manifest.sh generate \"$TOP_LEVEL_PACKAGE_PATH\" \"$G2S_PATH\" \"$GIR_NAMES\" \"$GIR_PATH\" "
-    fi
 
     ;;
 remove-generated) 
@@ -241,11 +280,36 @@ c-flags)
 
     echo "${DECORC} ${MAC_LINKER_FIXES}"
     ;;
+
+validate)
+    echo "TODO: not implemented"
+    ;;
+
+xcodegen)
+    echo "TODO: not implemented"
+    ;;
+
+docgen)
+    echo "TODO: not implemented"
+    ;;
+
+g2s-init)
+    echo "TODO: not implemented"
+    ;;
 *)
-    echo "Gir 2 swift code generation tool"
-    echo "Commands:"
-    echo "  generate [path to root package] [optional path to gir2swift executable]"
-    echo "  remove-generated [path to root package]"
-    echo "  c-flags [path to root package]"
+    echo "OVERVIEW: Gir 2 swift code generation driver tool"
+    echo ""
+    echo "USAGE: ./gir2swift-generation-driver.sh COMMAND [PATH TO ROOT PACKAGES] [ARGUMENTS]..."
+    echo ""
+    echo "COMMANDS:"
+    echo "  generate [optional path to gir2swift executable]"
+    echo "                      Builds and runs gir2swift"
+    echo "  remove-generated    Removes generated files"
+    echo "  c-flags             Prints c-flags for Swift compiler on macOS to the standard output"
+    echo "  validate            Validates package and dependencies using gir2swift"
+    echo "  xcodegen            Generates Xcode project"
+    echo "  docgen              Generates documentation using Jazzy"
+    echo "  g2s-init [GIR NAME] [pkg-config NAME] [SWIFT NAME]  [OPTIONAL POST PROCESSING]"
+    echo "                      Generates template and validates Swift project"
     ;;
 esac
