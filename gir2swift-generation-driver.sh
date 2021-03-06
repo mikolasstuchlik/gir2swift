@@ -30,6 +30,17 @@ function gir_file_arg-pkg-path {
     local GIR_NAME=$(get_gir_names_arg-package ${PKG_PATH})
     local GIR_PKG=$(get_gir_pkg_arg-package ${PKG_PATH})
 
+    # In case platform is macOS, library may be contained in a sandbox
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        local PKG_PATH=`pkg-config --variable=libdir ${GIR_PKG}`
+        local ASSUMED_PATH="${PKG_PATH}/../share/gir-1.0/${GIR_NAME}.gir"
+
+        if [ -f "${ASSUMED_PATH}" ] ; then
+            echo "${ASSUMED_PATH}"
+            exit 0
+        fi
+    fi
+
     # Attempt to search in default directories
     for DIR in "/opt/homebrew/share/gir-1.0" "/usr/local/share/gir-1.0" "/usr/share/gir-1.0" ; do
         CURRENT=$DIR
@@ -42,17 +53,6 @@ function gir_file_arg-pkg-path {
             exit 0
         fi
     done
-
-    # In case platform is macOS, library may be contained in a sandbox
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        local PKG_PATH=`pkg-config --variable=libdir ${GIR_PKG}`
-        local ASSUMED_PATH="${PKG_PATH}/../share/gir-1.0/${GIR_NAME}.gir"
-
-        if [ -f "${ASSUMED_PATH}" ] ; then
-            echo "${ASSUMED_PATH}"
-            exit 0
-        fi
-    fi
 
     exit 1
 }
