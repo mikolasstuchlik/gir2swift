@@ -1,28 +1,5 @@
 #!/bin/bash
 
-## TODO
-## Function used to determine, whether provided path contains valid package
-## ARGUMENT 1: Path to the Swift package in question
-function validate_is_processable_arg-path {
-    local PACKAGE_PATH=$1
-
-    local CALLER=$PWD
-    cd $PACKAGE_PATH
-
-    local PACKAGE=`swift package dump-package`
-    local GENERATED=`jq -r '.dependencies | .[] | select(.name == "gir2swift") | .name' <<< $PACKAGE`
-    local MANIFEST="gir2swift-manifest.sh"
-
-    if [[ $GENERATED && -f "$MANIFEST" ]]
-    then
-        cd $CALLER
-        return 0
-    else
-        cd $CALLER 
-        return 1
-    fi
-}
-
 ## Function used to determine, whether provided path requires processing by gir2swift
 ## ARGUMENT 1: Path to the Swift package in question
 ## RETURN: `true` if package contains file named "gir2swift-manifest.sh" 
@@ -281,10 +258,6 @@ c-flags)
     echo "${DECORC} ${MAC_LINKER_FIXES}"
     ;;
 
-validate)
-    echo "TODO: not implemented"
-    ;;
-
 ## THIS CODE IS MODIFIED LEGACY IMPLEMENTATION
 ## generate-xcodeproj is deprecated https://github.com/apple/swift-package-manager/pull/3062
 patchxcproj)
@@ -352,10 +325,6 @@ docgen)
             --module-version $JAZZY_VER --module $PACKAGE_NAME $JAZZY_ARGS
     rm -f .build 2>/dev/null
     ;;
-
-g2s-init)
-    echo "TODO: not implemented"
-    ;;
 *)
     echo "OVERVIEW: Gir 2 swift code generation driver tool"
     echo ""
@@ -366,10 +335,7 @@ g2s-init)
     echo "                      Builds and runs gir2swift"
     echo "  remove-generated    Removes generated files"
     echo "  c-flags             Prints c-flags for Swift compiler on macOS to the standard output"
-    echo "  validate            Validates package and dependencies using gir2swift"
     echo "  patchxcproj         Patches Xcode project"
     echo "  docgen              Generates documentation using Jazzy"
-    echo "  g2s-init [GIR NAME] [pkg-config NAME]"
-    echo "                      Generates template and validates Swift project"
     ;;
 esac
