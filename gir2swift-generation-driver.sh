@@ -68,8 +68,7 @@ function gir_2_swift_executable_arg-deps {
     local CALLER=$PWD
     cd $G2S_PACKAGE_PATH
 
-    ./distclean.sh > /dev/null
-    ./build.sh > /dev/null
+    swift build -c release > /dev/null
 
     cd $CALLER
 
