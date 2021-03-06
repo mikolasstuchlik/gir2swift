@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ## Function used to determine, whether provided path requires processing by gir2swift
 ## ARGUMENT 1: Path to the Swift package in question
